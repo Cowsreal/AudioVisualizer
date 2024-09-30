@@ -1,9 +1,17 @@
 let audioFile;
+let audioContext;
+const bufferSize = 2048;
+let currentFFT = [];
+
 
 document.getElementById('audioForm').addEventListener('submit', function(event)
 {
     event.preventDefault();
-    audioFile = document.getElementById(audioUpload).files[0];
+    audioFile = document.getElementById('audioUpload').files[0];
+
+    if (audioFile) {
+        processAudioFile();
+    }
 });
 
 // FFT, Danielson Lanczos
@@ -23,13 +31,74 @@ function fft(x)
     for(let k = 0; k < N / 2; k++)
     {
         const angle = (-2 * Math.PI * k) / N;
-        const W = new Complex(Math.cos(angle), Math.sin(angle));
-
-        ans[k] = even[k].add(W.multiply(odd[k]));
-        ans[k + N / 2] = even[k].subtract(W.multiply(odd[k]));
+        const W = math.complex(Math.cos(angle), Math.sin(angle));
+        
+        ans[k] = math.multiply(W, odd[k]);
+        ans[k] = math.add(even[k], ans[k]);
+        ans[k + N / 2] = math.multiply(W, odd[k]);
+        ans[k + N / 2] = math.subtract(even[k], ans[k + N / 2]);
     }
     return ans;
 }
+
+function processAudioFile()
+{
+    if(!audioFile)
+    {
+        return;
+    }
+
+    audioContext = new AudioContext();
+    const reader = new FileReader();
+
+    reader.onload = function(event)
+    {
+        const arrayBuffer = event.target.result
+        audioContext.decodeAudioData(arrayBuffer, function(buffer)
+        {
+            processAudioData(buffer);
+        }, function(e)
+        {
+            console.log("Did not retrieve file succesfully.");
+        });
+    }
+    reader.readAsArrayBuffer(audioFile);
+}
+
+function processAudioData(buffer)
+{
+
+    var sourceNode = audioContext.createBufferSource();
+    sourceNode.buffer = buffer;
+    sourceNode.connect(audioContext.destination);
+    sourceNode.start();
+
+    setInterval(() => 
+    {
+        const currTime = audioContext.currentTime;
+        const sampleIndex = Math.floor(currTime * buffer.sampleRate);
+
+        const segmentStart = sampleIndex % (buffer.length - bufferSize);
+        const segment = buffer.getChannelData(0).slice(segmentStart, segmentStart + bufferSize);
+        currentFFT = fft(segment);
+
+        updateGeo();
+
+    }, 1000 / 30);
+
+}
+
+function updateGeo() {
+    let averageMagnitude = 0;
+    for(var i = 0; i < currentFFT.length; i++)
+    {
+        averageMagnitude += Math.sqrt(currentFFT[i].re**2 + currentFFT[i].im**2);
+    }
+    averageMagnitude /= currentFFT.length;
+    averageMagnitude = Math.log(averageMagnitude);
+    mesh.scale.setScalar(averageMagnitude);
+}
+
 
 import * as THREE from "three";
 import { OrbitControls } from "jsm/controls/OrbitControls.js"
