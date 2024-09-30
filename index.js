@@ -2,7 +2,12 @@ let audioFile;
 let audioContext;
 const bufferSize = 2048;
 let currentFFT = [];
+let greatCircles = [];
 
+function randomInRange(min, max)
+{
+    return Math.random() < 0.5 ? ((1-Math.random()) * (max-min) + min) : (Math.random() * (max-min) + min);
+}
 
 document.getElementById('audioForm').addEventListener('submit', function(event)
 {
@@ -84,19 +89,50 @@ function processAudioData(buffer)
 
         updateGeo();
 
-    }, 1000 / 30);
+    }, 1000 / 60);
 
 }
 
 function updateGeo() {
-    let averageMagnitude = 0;
-    for(var i = 0; i < currentFFT.length; i++)
+    // let averageMagnitude = 0;
+    // for(var i = 0; i < currentFFT.length; i++)
+    // {
+    //     averageMagnitude += Math.sqrt(currentFFT[i].re**2 + currentFFT[i].im**2);
+    // }
+    // averageMagnitude /= currentFFT.length;
+    // averageMagnitude /= 2;
+    // mesh.scale.setScalar(averageMagnitude);
+    const time = Date.now() * 0.0005;
+    const breathingRadius = 1 + 0.05 * Math.sin(time);
+    for (let i = 0; i < greatCircles.length; i++)
     {
-        averageMagnitude += Math.sqrt(currentFFT[i].re**2 + currentFFT[i].im**2);
+        const { circle, originalPoints, angleX, angleY } = greatCircles[i];
+        const positions = circle.geometry.attributes.position.array;
+
+        const axisX = new THREE.Vector3(1, 0, 0);
+        const axisY = new THREE.Vector3(0, 1, 0);
+        const quaternionX = new THREE.Quaternion().setFromAxisAngle(axisX, angleX);
+        const quaternionY = new THREE.Quaternion().setFromAxisAngle(axisY, angleY);
+
+        for (let j = 0; j < bufferSize; j++) {
+            let idx = j % 100;
+            const amplitude = Math.sqrt(currentFFT[idx].re**2 + currentFFT[idx].im**2) / 255 * (-1) ** j;
+            const index = j * 3;
+
+            const x = originalPoints[index] * breathingRadius * (1 + amplitude);
+            const y = originalPoints[index + 1] * breathingRadius * (1 + amplitude);
+            const z = originalPoints[index + 2] * breathingRadius * (1 + amplitude);
+
+            const point = new THREE.Vector3(x, y, z);
+            point.applyQuaternion(quaternionX);
+            point.applyQuaternion(quaternionY);
+
+            positions[index] = point.x;
+            positions[index + 1] = point.y;
+            positions[index + 2] = point.z;
+        }
+        circle.geometry.attributes.position.needsUpdate = true;
     }
-    averageMagnitude /= currentFFT.length;
-    averageMagnitude = Math.log(averageMagnitude);
-    mesh.scale.setScalar(averageMagnitude);
 }
 
 
@@ -111,36 +147,78 @@ document.body.appendChild(renderer.domElement);
 const fov = 75;
 const aspect = width / height;
 const near = 0.1;
-const far = 10;
+const far = 200;
 const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
 camera.position.z = 2;
 const scene = new THREE.Scene();
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.03;
+controls.dampingFactor = 0.008;
 
-const geo = new THREE.IcosahedronGeometry(1.0, 2);
-const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    flatShading: true
-});
-const mesh = new THREE.Mesh(geo, mat);
-scene.add(mesh);
+function createGreatCircle(numPoints, radius, angleX, angleY) 
+{
+    const points = [];
+    const colors = [];
 
-const wireMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    wireframe: true
-})
+    for (let i = 0; i < numPoints; i++) {
+        const theta = (i / numPoints) * Math.PI * 2;
+        const x = radius * Math.cos(theta);
+        const y = radius * Math.sin(theta);
+        points.push(new THREE.Vector3(x, y, 0));
 
-const wireMesh = new THREE.Mesh(geo, wireMat);
-wireMesh.scale.setScalar(1.001);
-mesh.add(wireMesh);
+        const color = new THREE.Color();
+        color.setHSL(i / numPoints, 1.0, 0.5);
+        colors.push(color);  
+    }
 
+    const axisX = new THREE.Vector3(1, 0, 0);
+    const quaternionX = new THREE.Quaternion().setFromAxisAngle(axisX, angleX);
+    
+    const axisY = new THREE.Vector3(0, 1, 0);
+    const quaternionY = new THREE.Quaternion().setFromAxisAngle(axisY, angleY);
 
-const hemiLight = new THREE.HemisphereLight(0x0099ff, 0xaa5500);
-scene.add(hemiLight);
+    points.forEach(point => {
+        point.applyQuaternion(quaternionX);
+        point.applyQuaternion(quaternionY);
+    });
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
+    const colorArray = new Float32Array(numPoints * 3);
+    colors.forEach((color, index) => {
+        colorArray[index * 3] = color.r;
+        colorArray[index * 3 + 1] = color.g;
+        colorArray[index * 3 + 2] = color.b;
+    });
+    
+    geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+    const material = new THREE.PointsMaterial({
+        size: 0.001,
+        vertexColors: true,
+        sizeAttenuation: true
+    });
+
+    const pointCloud = new THREE.Points(geometry, material);
+    scene.add(pointCloud);
+
+    return pointCloud;
+}
+
+for (let i = 0; i < 100; i++) {
+    const angleX = randomInRange(0, 2 * Math.PI);
+    const angleY = randomInRange(0, 2 * Math.PI);
+    const circle = createGreatCircle(bufferSize, 1, angleX, angleY);
+
+    greatCircles.push({
+        circle: circle,
+        originalPoints: circle.geometry.attributes.position.array.slice(),
+        angleX: angleX,
+        angleY: angleY
+    });
+
+    scene.add(circle);
+}
+    
 function animate(t = 0){
     requestAnimationFrame(animate);
     renderer.render(scene, camera);
